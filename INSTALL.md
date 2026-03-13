@@ -1,106 +1,122 @@
-# Installation — OpenClaw Agent Browser
+# Agent Browser — KI-Installationsanleitung
 
-## Voraussetzungen
+> **Zielgruppe:** KI-Agent auf einem Tailscale-verbundenen Rechner
+> **Ziel:** Browser mit CDP starten, socat-Bridge einrichten, und Verbindung zum OpenClaw-Server (100.120.120.120) herstellen
 
-- **Tailscale** muss auf dem PC installiert und verbunden sein
-- Ein Chromium-basierter Browser (Brave, Chrome, Chromium, Edge oder Arc)
-
-## Installation
-
-### Option 1: One-Liner (empfohlen)
+## Schritt 1: System prüfen
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/servas-ai/openclaw-agent-browser/main/install.sh)
+# OS erkennen
+uname -s  # Linux oder Darwin
+
+# Tailscale prüfen
+tailscale ip -4  # Muss eine IP zurückgeben
+
+# Browser finden — teste in dieser Reihenfolge:
+which brave-browser || which google-chrome || which chromium-browser || which chromium || which microsoft-edge
+# macOS: ls "/Applications/Brave Browser.app" || ls "/Applications/Google Chrome.app"
 ```
 
-### Option 2: Manuell
+**Abbruch falls:** Tailscale nicht installiert oder kein Browser gefunden.
+
+## Schritt 2: Abhängigkeiten
 
 ```bash
-git clone https://github.com/servas-ai/openclaw-agent-browser.git
-cd openclaw-agent-browser
-bash install.sh
+# Node.js (falls nicht vorhanden)
+node -v || (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
+
+# socat (Linux, für Remote-Zugriff)
+which socat || sudo apt-get install -y socat
 ```
 
-## Was passiert bei der Installation
+## Schritt 3: Browser mit CDP starten
 
-1. **Browser-Auswahl** — du wählst deinen Browser:
-   ```
-   [1] Brave        (empfohlen)
-   [2] Google Chrome
-   [3] Chromium
-   [4] Microsoft Edge
-   [5] Arc          (nur macOS)
-   ```
-
-2. **Tailscale-Check** — prüft ob Tailscale verbunden ist
-
-3. **Abhängigkeiten** — installiert Node.js und socat falls nötig
-
-4. **Browser-Start** — startet den Browser mit CDP Remote Debugging auf Port 9222
-
-5. **Verbindungstest** — testet automatisch:
-   - Lokaler CDP-Endpoint (localhost:9222)
-   - Remote CDP-Endpoint (Tailscale-IP:9222)
-   - OpenClaw Server (100.120.120.120)
-
-6. **Systemd-Service** (Linux) — erstellt einen Auto-Start Service
-
-## Nach der Installation
-
-### Browser starten/stoppen
+Ersetze `BROWSER` mit dem gefundenen Browser-Befehl aus Schritt 1.
 
 ```bash
-~/.openclaw-agent-browser/start-browser.sh    # Starten
-~/.openclaw-agent-browser/stop-browser.sh     # Stoppen
-~/.openclaw-agent-browser/test-connection.sh   # Verbindung testen
+mkdir -p ~/.openclaw-agent-browser
+
+# Browser starten
+BROWSER --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=~/.openclaw-agent-browser/profile &
+
+# Warten bis CDP bereit ist (max 15s)
+for i in $(seq 1 15); do
+  curl -s http://localhost:9222/json/version && break
+  sleep 1
+done
 ```
 
-### Mit OpenClaw verbinden
+## Schritt 4: socat-Bridge (nur Linux)
 
 ```bash
-openclaw browser connect <DEINE-TAILSCALE-IP>:9222
+# Bestehende Bridge beenden
+pkill -f "socat.*9222" 2>/dev/null
+
+# Bridge starten — macht CDP auf 0.0.0.0 erreichbar
+socat TCP4-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP4:127.0.0.1:9222 &
 ```
 
-### Auto-Start aktivieren (Linux)
+## Schritt 5: Verbindungstest
 
 ```bash
-systemctl --user enable openclaw-agent-browser
-systemctl --user start openclaw-agent-browser
+TAILSCALE_IP=$(tailscale ip -4)
+
+# Test 1: Lokaler CDP
+curl -s http://localhost:9222/json/version | jq -r '.Browser'
+# Erwartung: Brave/xxx oder Chrome/xxx
+
+# Test 2: Remote CDP (über Tailscale-IP)
+curl -s http://$TAILSCALE_IP:9222/json/version | jq -r '.Browser'
+# Erwartung: gleiche Ausgabe
+
+# Test 3: OpenClaw-Server erreichbar
+curl -s http://100.120.120.120:8008/health
+# Erwartung: "OK"
 ```
 
-## Konfiguration
+**Alle 3 Tests müssen bestanden werden.**
 
-| Variable | Default | Beschreibung |
-|---|---|---|
-| `OPENCLAW_SERVER` | `100.120.120.120` | OpenClaw Server IP |
-| `CDP_PORT` | `9222` | CDP Debug-Port |
-| `INSTALL_DIR` | `~/.openclaw-agent-browser` | Installationsverzeichnis |
+## Schritt 6: Systemd-Service (Linux, optional)
 
-Beispiel mit eigenem Port:
 ```bash
-CDP_PORT=9333 bash install.sh
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/openclaw-agent-browser.service << EOF
+[Unit]
+Description=OpenClaw Agent Browser (CDP)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=BROWSER --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=%h/.openclaw-agent-browser/profile
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now openclaw-agent-browser
 ```
 
-## Troubleshooting
+## Schritt 7: Ergebnis melden
 
-### Browser startet nicht
-```bash
-# Prüfe ob der Browser installiert ist
-which brave-browser    # oder: which google-chrome
+Gib dem User folgende Informationen zurück:
+
+```
+✅ Agent Browser installiert
+   Browser:     [Name + Version aus /json/version]
+   Tailscale:   [TAILSCALE_IP]
+   CDP:         http://[TAILSCALE_IP]:9222
+   OpenClaw:    openclaw browser connect [TAILSCALE_IP]:9222
+   Playwright:  chromium.connectOverCDP('http://[TAILSCALE_IP]:9222')
 ```
 
-### CDP nicht erreichbar
-```bash
-# Prüfe ob der Port frei ist
-lsof -i :9222
+## Fehlerbehebung
 
-# Starte den Browser manuell
-brave-browser --remote-debugging-port=9222 --no-first-run &
-```
-
-### OpenClaw Server nicht erreichbar
-```bash
-# Prüfe Tailscale
-tailscale status
-ping 100.120.120.120
-```
+| Problem | Lösung |
+|---|---|
+| `curl: (7) Failed to connect` | Browser nicht gestartet → Schritt 3 wiederholen |
+| Remote CDP nicht erreichbar | socat nicht aktiv → Schritt 4 wiederholen |
+| OpenClaw nicht erreichbar | `tailscale status` prüfen, `ping 100.120.120.120` |
+| Port 9222 belegt | `lsof -i :9222` → Prozess beenden, nochmal starten |
