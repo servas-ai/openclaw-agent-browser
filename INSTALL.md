@@ -1,122 +1,82 @@
 # Agent Browser — KI-Installationsanleitung
 
-> **Zielgruppe:** KI-Agent auf einem Tailscale-verbundenen Rechner
-> **Ziel:** Browser mit CDP starten, socat-Bridge einrichten, und Verbindung zum OpenClaw-Server (100.120.120.120) herstellen
+> **Tool:** Vercel `agent-browser` CLI (https://agent-browser.dev)
+> **Ziel:** agent-browser auf diesem PC installieren, Browser starten, Verbindung zum OpenClaw-Server (100.120.120.120) testen
 
-## Schritt 1: System prüfen
+## Schritt 1: Node.js prüfen
 
 ```bash
-# OS erkennen
-uname -s  # Linux oder Darwin
-
-# Tailscale prüfen
-tailscale ip -4  # Muss eine IP zurückgeben
-
-# Browser finden — teste in dieser Reihenfolge:
-which brave-browser || which google-chrome || which chromium-browser || which chromium || which microsoft-edge
-# macOS: ls "/Applications/Brave Browser.app" || ls "/Applications/Google Chrome.app"
+node -v  # Muss >= 18 sein
+# Falls nicht vorhanden:
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
 ```
 
-**Abbruch falls:** Tailscale nicht installiert oder kein Browser gefunden.
-
-## Schritt 2: Abhängigkeiten
+## Schritt 2: agent-browser installieren
 
 ```bash
-# Node.js (falls nicht vorhanden)
-node -v || (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
-
-# socat (Linux, für Remote-Zugriff)
-which socat || sudo apt-get install -y socat
+npm install -g agent-browser
+agent-browser install   # Lädt Chromium herunter
 ```
 
-## Schritt 3: Browser mit CDP starten
-
-Ersetze `BROWSER` mit dem gefundenen Browser-Befehl aus Schritt 1.
+## Schritt 3: Testen
 
 ```bash
-mkdir -p ~/.openclaw-agent-browser
+# Seite öffnen
+agent-browser open https://example.com
 
-# Browser starten
-BROWSER --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=~/.openclaw-agent-browser/profile &
+# Text extrahieren
+agent-browser text https://example.com
 
-# Warten bis CDP bereit ist (max 15s)
-for i in $(seq 1 15); do
-  curl -s http://localhost:9222/json/version && break
-  sleep 1
-done
+# Screenshot
+agent-browser screenshot https://example.com --output /tmp/test.png
+
+# DOM Snapshot (für AI — reduziert Token-Verbrauch)
+agent-browser snapshot https://example.com
 ```
 
-## Schritt 4: socat-Bridge (nur Linux)
+## Schritt 4: Mit anderem Browser (optional)
 
 ```bash
-# Bestehende Bridge beenden
-pkill -f "socat.*9222" 2>/dev/null
+# Brave
+agent-browser open https://example.com --browser brave
 
-# Bridge starten — macht CDP auf 0.0.0.0 erreichbar
-socat TCP4-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP4:127.0.0.1:9222 &
+# Chrome
+agent-browser open https://example.com --browser chrome
+
+# Edge
+agent-browser open https://example.com --browser msedge
 ```
 
-## Schritt 5: Verbindungstest
+## Schritt 5: Tailscale + OpenClaw Verbindung
 
 ```bash
-TAILSCALE_IP=$(tailscale ip -4)
+# Tailscale IP
+tailscale ip -4
 
-# Test 1: Lokaler CDP
-curl -s http://localhost:9222/json/version | jq -r '.Browser'
-# Erwartung: Brave/xxx oder Chrome/xxx
-
-# Test 2: Remote CDP (über Tailscale-IP)
-curl -s http://$TAILSCALE_IP:9222/json/version | jq -r '.Browser'
-# Erwartung: gleiche Ausgabe
-
-# Test 3: OpenClaw-Server erreichbar
+# OpenClaw erreichbar?
 curl -s http://100.120.120.120:8008/health
 # Erwartung: "OK"
 ```
 
-**Alle 3 Tests müssen bestanden werden.**
-
-## Schritt 6: Systemd-Service (Linux, optional)
-
-```bash
-mkdir -p ~/.config/systemd/user
-
-cat > ~/.config/systemd/user/openclaw-agent-browser.service << EOF
-[Unit]
-Description=OpenClaw Agent Browser (CDP)
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=BROWSER --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=%h/.openclaw-agent-browser/profile
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-EOF
-
-systemctl --user daemon-reload
-systemctl --user enable --now openclaw-agent-browser
-```
-
-## Schritt 7: Ergebnis melden
-
-Gib dem User folgende Informationen zurück:
+## Schritt 6: Ergebnis melden
 
 ```
-✅ Agent Browser installiert
-   Browser:     [Name + Version aus /json/version]
+✅ agent-browser installiert
+   Version:     [agent-browser --version]
    Tailscale:   [TAILSCALE_IP]
-   CDP:         http://[TAILSCALE_IP]:9222
-   OpenClaw:    openclaw browser connect [TAILSCALE_IP]:9222
-   Playwright:  chromium.connectOverCDP('http://[TAILSCALE_IP]:9222')
+   OpenClaw:    erreichbar / nicht erreichbar
+   Test:        Screenshot erstellt unter /tmp/test.png
 ```
 
-## Fehlerbehebung
+## Verfügbare Befehle
 
-| Problem | Lösung |
+| Befehl | Beschreibung |
 |---|---|
-| `curl: (7) Failed to connect` | Browser nicht gestartet → Schritt 3 wiederholen |
-| Remote CDP nicht erreichbar | socat nicht aktiv → Schritt 4 wiederholen |
-| OpenClaw nicht erreichbar | `tailscale status` prüfen, `ping 100.120.120.120` |
-| Port 9222 belegt | `lsof -i :9222` → Prozess beenden, nochmal starten |
+| `agent-browser open <URL>` | Seite öffnen, Snapshot zurückgeben |
+| `agent-browser text <URL>` | Sichtbaren Text extrahieren |
+| `agent-browser screenshot <URL>` | Screenshot als PNG |
+| `agent-browser snapshot <URL>` | DOM Snapshot (AI-optimiert) |
+| `agent-browser click <ref> <URL>` | Element per Ref-ID klicken |
+| `agent-browser type <ref> <text> <URL>` | Text in Feld eingeben |
+| `agent-browser install` | Chromium herunterladen |

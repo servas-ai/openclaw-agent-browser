@@ -1,6 +1,6 @@
 ---
 name: agent-browser
-description: "Remote browser control via CDP. Install on a Tailscale-connected PC, then connect from OpenClaw via agent-browser.connect {{AGENT_BROWSER_HOST}}:{{CDP_PORT}}."
+description: "Browse and interact with web pages using Vercel agent-browser CLI. AI-optimized snapshots, screenshots, text extraction, and DOM interaction."
 metadata:
   openclaw:
     emoji: "🌐"
@@ -8,64 +8,63 @@ metadata:
 
 # Agent Browser Skill
 
-Remote Chromium-based browser (Brave, Chrome, etc.) on a Tailscale-connected PC, controllable via CDP at `http://{{AGENT_BROWSER_HOST}}:{{CDP_PORT}}`.
+Vercel `agent-browser` CLI — AI-optimierte Browser-Steuerung.
 
-## Installation (auf dem Ziel-PC)
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/servas-ai/openclaw-agent-browser/main/install.sh)
-```
-
-Das Script fragt nach dem Browser (Brave/Chrome/Chromium/Edge/Arc), startet CDP, richtet socat-Bridge ein und testet die Verbindung.
-
-## Connect via Playwright
-
-```javascript
-const { chromium } = require('playwright');
-const browser = await chromium.connectOverCDP('http://{{AGENT_BROWSER_HOST}}:{{CDP_PORT}}');
-const page = browser.contexts()[0].pages()[0] || await browser.contexts()[0].newPage();
-await page.goto('https://example.com');
-const title = await page.title();
-```
-
-## Connect via OpenClaw CLI
+## Open a Page (with Snapshot)
 
 ```bash
-openclaw browser connect {{AGENT_BROWSER_HOST}}:{{CDP_PORT}}
+agent-browser open https://example.com
 ```
 
-## Check Status
+Returns an accessibility-tree snapshot with ref IDs for interaction.
+
+## Extract Text
 
 ```bash
-curl -s http://{{AGENT_BROWSER_HOST}}:{{CDP_PORT}}/json/version | jq '.Browser'
+agent-browser text https://example.com
 ```
 
-## List Open Tabs
+## Take Screenshot
 
 ```bash
-curl -s http://{{AGENT_BROWSER_HOST}}:{{CDP_PORT}}/json/list | jq '.[].url'
+agent-browser screenshot https://example.com --output /tmp/screenshot.png
 ```
 
-## Navigate a Tab
+## DOM Snapshot (AI-optimized)
 
 ```bash
-# Get first tab's WebSocket URL
-WS=$(curl -s http://{{AGENT_BROWSER_HOST}}:{{CDP_PORT}}/json/list | jq -r '.[0].webSocketDebuggerUrl')
-echo "Connect Playwright to: $WS"
+agent-browser snapshot https://example.com
 ```
 
-## Screenshot via Playwright
+Returns a compact snapshot using ref-based selectors instead of full CSS/XPath — reduces token usage by ~80%.
 
-```javascript
-const page = browser.contexts()[0].pages()[0];
-await page.screenshot({ path: '/tmp/screenshot.png', fullPage: true });
+## Click an Element
+
+```bash
+agent-browser click <ref> https://example.com
+```
+
+Where `<ref>` is the reference ID from a previous `open` or `snapshot` call.
+
+## Type into a Field
+
+```bash
+agent-browser type <ref> "search text" https://example.com
+```
+
+## Use a Specific Browser
+
+```bash
+agent-browser open https://example.com --browser brave
+agent-browser open https://example.com --browser chrome
+agent-browser open https://example.com --browser msedge
 ```
 
 ## Tips for AI Agents
 
-- CDP port is 9222 by default, configurable via `CDP_PORT` env var
-- socat bridge runs on Linux to make CDP accessible over Tailscale
-- On macOS, CDP is directly accessible over the network
-- Use `connectOverCDP` (not `connect`) for Chromium-based browsers
-- The browser profile persists in `~/.openclaw-agent-browser/profile`
-- Restart with `~/.openclaw-agent-browser/start-browser.sh`
+- Use `snapshot` instead of `text` when you need to interact with elements — it returns ref IDs
+- Ref IDs are stable within a session — click/type using them
+- Screenshots are useful for visual verification
+- The `--browser` flag lets you use Brave, Chrome, or Edge instead of built-in Chromium
+- Install with `npm install -g agent-browser && agent-browser install`
+- Docs: https://agent-browser.dev
